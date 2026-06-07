@@ -1,11 +1,167 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logistics - Delivery Coordination</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    
+  <!-- Nav -->
+  <nav id="navbar" class="hidden">
+    <h1>Logistics</h1>
+    <div class="user-info">
+      <span id="displayName"></span>
+      <span id="displayRole" class="status-badge"></span>
+      <button class="btn-logout" onclick="auth.logout()">Logout</button>
+    </div>
+  </nav>
+
+  <!-- Loading -->
+  <div id="loadingScreen" style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
+    <p>Loading...</p>
+  </div>
+
+  <!-- ============ AUTH PAGES ============ -->
+
+  <!-- Login -->
+  <div id="page-login" class="container hidden">
+    <div class="card">
+      <h2>Sign In</h2>
+      <form id="loginForm">
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="loginEmail" required>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="loginPassword" required>
+        </div>
+        <div id="loginError" class="error-msg"></div>
+        <button type="submit" class="btn btn-primary">Sign In</button>
+      </form>
+      <div class="form-footer">
+        Don't have an account? <a onclick="router.navigate('signup')">Sign Up</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Signup -->
+  <div id="page-signup" class="container hidden">
+    <div class="card">
+      <h2>Create Account</h2>
+      <form id="signupForm">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="signupName" required>
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="signupEmail" required>
+        </div>
+        <div class="form-group">
+          <label>Phone</label>
+          <input type="tel" id="signupPhone" required>
+        </div>
+        <div class="form-group">
+          <label>Password (min 6 characters)</label>
+          <input type="password" id="signupPassword" minlength="6" required>
+        </div>
+        <div class="form-group">
+          <label>I am a...</label>
+          <div class="role-selector">
+            <div class="role-option" data-role="customer" onclick="auth.selectRole(this)">Customer</div>
+            <div class="role-option" data-role="trader" onclick="auth.selectRole(this)">Trader</div>
+          </div>
+        </div>
+        <div id="signupError" class="error-msg"></div>
+        <button type="submit" class="btn btn-primary">Create Account</button>
+      </form>
+      <div class="form-footer">
+        Already have an account? <a onclick="router.navigate('login')">Sign In</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ CUSTOMER DASHBOARD ============ -->
+  <div id="page-customer" class="hidden">
+    <div class="dashboard-grid">
+      <!-- Create Order -->
+      <div class="card">
+        <h2>New Delivery Order</h2>
+        <form id="orderForm">
+          <div class="form-group">
+            <label>Pickup Address</label>
+            <input type="text" id="pickupAddr" required>
+          </div>
+          <div class="form-group">
+            <label>Drop-off Address</label>
+            <input type="text" id="dropoffAddr" required>
+          </div>
+          <div class="form-group">
+            <label>Package Description</label>
+            <textarea id="pkgDesc" required></textarea>
+          </div>
+          <div class="form-group">
+            <label>Contact Phone</label>
+            <input type="tel" id="contactPhone" required>
+          </div>
+          <div id="orderError" class="error-msg"></div>
+          <div id="orderSuccess" class="success-msg"></div>
+          <button type="submit" class="btn btn-primary">Place Order</button>
+        </form>
+      </div>
+
+      <!-- My Orders -->
+      <div class="card">
+        <h2>My Orders</h2>
+        <div id="customerOrders" class="order-list"></div>
+        <p id="customerNoOrders" style="color:#888;font-size:0.9rem;">No orders yet.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TRADER DASHBOARD ============ -->
+  <div id="page-trader" class="hidden">
+    <div class="container" style="max-width:900px;">
+      <div class="tabs">
+        <div class="tab active" data-tab="pending" onclick="trader.switchTab('pending')">Pending Orders</div>
+        <div class="tab" data-tab="active" onclick="trader.switchTab('active')">My Active</div>
+        <div class="tab" data-tab="history" onclick="trader.switchTab('history')">History</div>
+      </div>
+
+      <!-- Pending -->
+      <div id="tab-pending">
+        <div id="pendingOrders" class="order-list"></div>
+        <p id="pendingNoOrders" style="color:#888;font-size:0.9rem;">No pending orders.</p>
+      </div>
+
+      <!-- Active -->
+      <div id="tab-active" class="hidden">
+        <div id="activeOrders" class="order-list"></div>
+        <p id="activeNoOrders" style="color:#888;font-size:0.9rem;">No active orders.</p>
+      </div>
+
+      <!-- History -->
+      <div id="tab-history" class="hidden">
+        <div id="historyOrders" class="order-list"></div>
+        <p id="historyNoOrders" style="color:#888;font-size:0.9rem;">No completed deliveries.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/customer.js"></script>
+  <script src="js/trader.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>

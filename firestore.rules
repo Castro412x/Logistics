@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Helper: get the user's role from the users collection
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // Helper: check if the authenticated user owns a document
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if isAuth() && isOwner(userId);
+    }
+
+    // Orders collection
+    match /orders/{orderId} {
+      // Customers can create orders with their own customerId
+      allow create: if isAuth()
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.status == "pending";
+
+      // Customer can read their own orders
+      // Trader can read pending orders or orders they've accepted
+      allow read: if isAuth() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.status == "pending" ||
+        resource.data.traderId == request.auth.uid
+      );
+
+      // Customer can cancel their own pending orders
+      // Trader can accept pending orders (atomic transaction check via client)
+      // Trader can update orders they've accepted
+      allow update: if isAuth() && (
+        // Customer cancelling their own pending order
+        (resource.data.customerId == request.auth.uid
+         && resource.data.status == "pending"
+         && request.resource.data.status == "cancelled"
+         && request.resource.data.traderId == null)
+        ||
+        // Trader accepting a pending order
+        (resource.data.status == "pending"
+         && request.resource.data.status == "accepted"
+         && request.resource.data.traderId == request.auth.uid
+         && request.resource.data.customerId == resource.data.customerId)
+        ||
+        // Trader updating status of their accepted order
+        (resource.data.traderId == request.auth.uid
+         && resource.data.status in ["accepted", "picked_up", "in_transit"]
+         && request.resource.data.status in ["picked_up", "in_transit", "delivered"])
+        ||
+        // Trader updating location when in_transit
+        (resource.data.traderId == request.auth.uid
+         && resource.data.status == "in_transit"
+         && request.resource.data.currentLocation != null)
+      );
+
+      allow delete: if false;
+    }
+
+    // Trader locations subcollection (alternative approach)
+    match /locations/{locationId} {
+      allow read, write: if isAuth();
+    }
+  }
+}
