@@ -72,15 +72,15 @@ const trader = {
 
         if (snapshot.empty) {
           noOrders.classList.remove('hidden');
-          return;
+        } else {
+          noOrders.classList.add('hidden');
+          snapshot.forEach(doc => {
+            const order = { id: doc.id, ...doc.data() };
+            container.appendChild(this.renderActiveCard(order));
+          });
         }
-        noOrders.classList.add('hidden');
 
-        snapshot.forEach(doc => {
-          const order = { id: doc.id, ...doc.data() };
-          container.appendChild(this.renderActiveCard(order));
-        });
-
+        // Refresh history too (runs even when no active orders)
         this.loadHistory();
       }, err => {
         console.error('Active listener error:', err);
