@@ -1,17 +1,34 @@
 const router = {
   currentPage: null,
+  params: {},
 
   init() {
     window.addEventListener('hashchange', () => this.handleRoute());
     this.handleRoute();
   },
 
-  navigate(page) {
-    window.location.hash = page;
+  navigate(page, params) {
+    if (params) {
+      window.location.hash = page + '/' + encodeURIComponent(JSON.stringify(params));
+    } else {
+      window.location.hash = page;
+    }
   },
 
   handleRoute() {
-    const hash = window.location.hash.replace('#', '') || 'login';
+    let hash = window.location.hash.replace('#', '') || 'login';
+    let params = {};
+
+    // Check for params in hash
+    const slashIdx = hash.indexOf('/');
+    if (slashIdx !== -1) {
+      try {
+        params = JSON.parse(decodeURIComponent(hash.slice(slashIdx + 1)));
+      } catch (e) { /* ignore */ }
+      hash = hash.slice(0, slashIdx);
+    }
+
+    this.params = params;
     const user = auth.currentUser;
 
     if (!user && hash !== 'signup' && hash !== 'login') {

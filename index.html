@@ -122,6 +122,21 @@
     </div>
   </div>
 
+  <!-- ============ LIVE TRACKING PAGE ============ -->
+  <div id="page-track" class="hidden">
+    <div style="position:relative;height:calc(100vh - 60px);">
+      <div id="trackMap" style="height:100%;width:100%;"></div>
+      <div style="position:absolute;top:1rem;left:1rem;right:1rem;z-index:1000;background:#fff;border-radius:10px;padding:1rem;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+          <strong id="trackOrderStatus" class="status-badge"></strong>
+          <button class="btn btn-sm btn-danger" onclick="router.navigate('customer')">Back</button>
+        </div>
+        <p id="trackOrderInfo" style="font-size:0.85rem;color:#555;"></p>
+        <p id="trackDriverInfo" style="font-size:0.85rem;color:#555;"></p>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ TRADER DASHBOARD ============ -->
   <div id="page-trader" class="hidden">
     <div class="container" style="max-width:900px;">

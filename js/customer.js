@@ -1,6 +1,8 @@
 const customer = {
   ordersListener: null,
-  mapInstances: {},
+  trackListener: null,
+  trackMap: null,
+  trackMarker: null,
 
   init() {
     this.listenToOrders();
@@ -117,9 +119,8 @@ const customer = {
       ${order.acceptedAt ? `<p style="font-size:0.8rem;color:#888;">Accepted: ${this.formatTime(order.acceptedAt)}</p>` : ''}
       <div class="order-actions">
         ${order.status === 'pending' ? `<button class="btn btn-danger btn-sm" onclick="customer.cancelOrder('${order.id}')">Cancel</button>` : ''}
-        ${order.status === 'in_transit' && order.currentLocation ? `<button class="btn btn-info btn-sm" onclick="customer.toggleMap('${order.id}')">${this.mapInstances[order.id] ? 'Hide Map' : 'Live Map'}</button>` : ''}
+        ${order.status === 'in_transit' ? `<button class="btn btn-info btn-sm" onclick="customer.openTrackPage('${order.id}')">Live Track</button>` : ''}
       </div>
-      ${order.status === 'in_transit' ? `<div id="map-container-${order.id}" class="hidden" style="margin-top:0.75rem;"><div id="map-${order.id}" style="height:250px;border-radius:8px;"></div></div>` : ''}
     `;
     return card;
   },
@@ -140,43 +141,62 @@ const customer = {
     }
   },
 
-  toggleMap(orderId) {
-    const container = document.getElementById('map-container-' + orderId);
-    if (!container) return;
+  openTrackPage(orderId) {
+    if (this.trackListener) this.trackListener();
+    if (this.trackMap) { this.trackMap.remove(); this.trackMap = null; }
 
-    if (this.mapInstances[orderId]) {
-      container.classList.add('hidden');
-      this.mapInstances[orderId].unsubscribe();
-      this.mapInstances[orderId].map.remove();
-      delete this.mapInstances[orderId];
-      return;
-    }
+    router.navigate('track', { orderId });
 
-    container.classList.remove('hidden');
-    setTimeout(() => this.initMap(orderId), 100);
+    setTimeout(() => this.initTrackMap(orderId), 200);
   },
 
-  initMap(orderId) {
-    const mapEl = document.getElementById('map-' + orderId);
-    if (!mapEl || this.mapInstances[orderId]) return;
+  initTrackMap(orderId) {
+    const mapEl = document.getElementById('trackMap');
+    if (!mapEl) return;
 
-    const map = L.map(mapEl).setView([0, 0], 13);
+    const map = L.map(mapEl, { zoomControl: true }).setView([0, 0], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    const marker = L.marker([0, 0]).addTo(map);
+    const marker = L.marker([0, 0], {
+      icon: L.icon({
+        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34]
+      })
+    }).addTo(map);
 
-    const unsubscribe = db.collection('orders').doc(orderId)
+    this.trackMap = map;
+    this.trackMarker = marker;
+
+    this.trackListener = db.collection('orders').doc(orderId)
       .onSnapshot(doc => {
         const data = doc.data();
-        if (data && data.currentLocation) {
+        if (!data) return;
+
+        const statusLabels = {
+          pending: 'Pending', accepted: 'Accepted', picked_up: 'Picked Up',
+          in_transit: 'In Transit', delivered: 'Delivered', cancelled: 'Cancelled'
+        };
+        document.getElementById('trackOrderStatus').textContent = statusLabels[data.status] || data.status;
+        document.getElementById('trackOrderStatus').className = 'status-badge status-' + data.status;
+
+        document.getElementById('trackOrderInfo').innerHTML =
+          `<strong>From:</strong> ${this.escHtml(data.pickup)}<br><strong>To:</strong> ${this.escHtml(data.dropoff)}`;
+
+        document.getElementById('trackDriverInfo').innerHTML =
+          data.traderName ? `<strong>Rider:</strong> ${this.escHtml(data.traderName)} ${data.traderPhone ? '- ' + this.escHtml(data.traderPhone) : ''}` : '';
+
+        if (data.currentLocation) {
           const { lat, lng } = data.currentLocation;
           marker.setLatLng([lat, lng]);
           map.setView([lat, lng], 15);
         }
       });
 
-    this.mapInstances[orderId] = { map, marker, unsubscribe };
+    // Fix map rendering after becoming visible
+    setTimeout(() => map.invalidateSize(), 300);
   }
 };
