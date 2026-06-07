@@ -1,7 +1,6 @@
 const customer = {
   ordersListener: null,
-  map: null,
-  marker: null,
+  mapInstances: {},
 
   init() {
     this.listenToOrders();
@@ -17,6 +16,7 @@ const customer = {
     const phone = document.getElementById('contactPhone').value.trim();
     const errEl = document.getElementById('orderError');
     const successEl = document.getElementById('orderSuccess');
+    const btn = document.querySelector('#orderForm .btn-primary');
 
     errEl.textContent = '';
     successEl.textContent = '';
@@ -25,6 +25,9 @@ const customer = {
       errEl.textContent = 'Please fill in all fields.';
       return;
     }
+
+    btn.disabled = true;
+    btn.textContent = 'Placing order...';
 
     try {
       await db.collection('orders').add({
@@ -42,10 +45,14 @@ const customer = {
         acceptedAt: null,
         currentLocation: null
       });
-      successEl.textContent = 'Order placed!';
+      successEl.textContent = 'Order placed successfully!';
       document.getElementById('orderForm').reset();
+      document.getElementById('customerOrders').scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
-      errEl.textContent = err.message;
+      errEl.textContent = auth.getFriendlyError(err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Place Order';
     }
   },
 
@@ -77,6 +84,12 @@ const customer = {
       });
   },
 
+  formatTime(ts) {
+    if (!ts) return '';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleString();
+  },
+
   renderOrderCard(order) {
     const card = document.createElement('div');
     card.className = 'order-card ' + (order.status || 'pending');
@@ -92,23 +105,34 @@ const customer = {
 
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:start;">
-        <h3>${order.pickup} → ${order.dropoff}</h3>
+        <div>
+          <h3 style="margin-bottom:0.25rem;">${this.escHtml(order.pickup)} → ${this.escHtml(order.dropoff)}</h3>
+          <span style="font-size:0.8rem;color:#888;">${this.formatTime(order.createdAt)}</span>
+        </div>
         <span class="status-badge status-${order.status}">${statusLabels[order.status] || order.status}</span>
       </div>
-      <p><strong>Package:</strong> ${order.packageDescription}</p>
-      <p><strong>Contact:</strong> ${order.customerPhone}</p>
-      ${order.traderName ? `<p><strong>Rider:</strong> ${order.traderName} ${order.traderPhone ? ' - ' + order.traderPhone : ''}</p>` : ''}
+      <p style="margin-top:0.5rem;"><strong>Package:</strong> ${this.escHtml(order.packageDescription)}</p>
+      <p><strong>Contact:</strong> ${this.escHtml(order.customerPhone)}</p>
+      ${order.traderName ? `<p><strong>Rider:</strong> ${this.escHtml(order.traderName)}${order.traderPhone ? ' - ' + this.escHtml(order.traderPhone) : ''}</p>` : ''}
+      ${order.acceptedAt ? `<p style="font-size:0.8rem;color:#888;">Accepted: ${this.formatTime(order.acceptedAt)}</p>` : ''}
       <div class="order-actions">
         ${order.status === 'pending' ? `<button class="btn btn-danger btn-sm" onclick="customer.cancelOrder('${order.id}')">Cancel</button>` : ''}
-        ${order.status === 'in_transit' && order.currentLocation ? `<button class="btn btn-info btn-sm" onclick="customer.showMap('${order.id}')">Live Map</button>` : ''}
+        ${order.status === 'in_transit' && order.currentLocation ? `<button class="btn btn-info btn-sm" onclick="customer.toggleMap('${order.id}')">${this.mapInstances[order.id] ? 'Hide Map' : 'Live Map'}</button>` : ''}
       </div>
-      ${order.status === 'in_transit' ? `<div id="map-container-${order.id}" class="hidden"><div id="map-${order.id}" style="height:250px;border-radius:8px;margin-top:0.5rem;"></div></div>` : ''}
+      ${order.status === 'in_transit' ? `<div id="map-container-${order.id}" class="hidden" style="margin-top:0.75rem;"><div id="map-${order.id}" style="height:250px;border-radius:8px;"></div></div>` : ''}
     `;
     return card;
   },
 
+  escHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  },
+
   async cancelOrder(orderId) {
-    if (!confirm('Cancel this order?')) return;
+    if (!confirm('Are you sure you want to cancel this order?')) return;
     try {
       await db.collection('orders').doc(orderId).update({ status: 'cancelled' });
     } catch (err) {
@@ -116,35 +140,43 @@ const customer = {
     }
   },
 
-  showMap(orderId) {
+  toggleMap(orderId) {
     const container = document.getElementById('map-container-' + orderId);
     if (!container) return;
-    const isHidden = container.classList.contains('hidden');
-    container.classList.toggle('hidden');
 
-    if (isHidden) {
-      setTimeout(() => {
-        const mapEl = document.getElementById('map-' + orderId);
-        const map = L.map(mapEl).setView([0, 0], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap'
-        }).addTo(map);
-        const marker = L.marker([0, 0]).addTo(map);
-
-        const unsubscribe = db.collection('orders').doc(orderId)
-          .onSnapshot(doc => {
-            const data = doc.data();
-            if (data.currentLocation) {
-              const { lat, lng } = data.currentLocation;
-              marker.setLatLng([lat, lng]);
-              map.setView([lat, lng], 15);
-            }
-          });
-        map._unsubscribe = unsubscribe;
-      }, 100);
-    } else {
-      const mapEl = document.getElementById('map-' + orderId);
-      if (mapEl && mapEl._unsubscribe) mapEl._unsubscribe();
+    if (this.mapInstances[orderId]) {
+      container.classList.add('hidden');
+      this.mapInstances[orderId].unsubscribe();
+      this.mapInstances[orderId].map.remove();
+      delete this.mapInstances[orderId];
+      return;
     }
+
+    container.classList.remove('hidden');
+    setTimeout(() => this.initMap(orderId), 100);
+  },
+
+  initMap(orderId) {
+    const mapEl = document.getElementById('map-' + orderId);
+    if (!mapEl || this.mapInstances[orderId]) return;
+
+    const map = L.map(mapEl).setView([0, 0], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    const marker = L.marker([0, 0]).addTo(map);
+
+    const unsubscribe = db.collection('orders').doc(orderId)
+      .onSnapshot(doc => {
+        const data = doc.data();
+        if (data && data.currentLocation) {
+          const { lat, lng } = data.currentLocation;
+          marker.setLatLng([lat, lng]);
+          map.setView([lat, lng], 15);
+        }
+      });
+
+    this.mapInstances[orderId] = { map, marker, unsubscribe };
   }
 };
