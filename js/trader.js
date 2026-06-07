@@ -2,11 +2,26 @@ const trader = {
   pendingListener: null,
   activeListener: null,
   locationWatcher: null,
+  locationOrderId: null,
   currentTab: 'pending',
+  acceptingSet: new Set(),
 
   init() {
     this.listenPending();
     this.listenActive();
+  },
+
+  escHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  },
+
+  formatTime(ts) {
+    if (!ts) return '';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleString();
   },
 
   switchTab(tab) {
@@ -66,7 +81,6 @@ const trader = {
           container.appendChild(this.renderActiveCard(order));
         });
 
-        // Refresh history too
         this.loadHistory();
       }, err => {
         console.error('Active listener error:', err);
@@ -77,26 +91,30 @@ const trader = {
     const user = auth.currentUser;
     if (!user) return;
 
-    const snap = await db.collection('orders')
-      .where('traderId', '==', user.uid)
-      .where('status', '==', 'delivered')
-      .orderBy('createdAt', 'desc')
-      .get();
+    try {
+      const snap = await db.collection('orders')
+        .where('traderId', '==', user.uid)
+        .where('status', '==', 'delivered')
+        .orderBy('createdAt', 'desc')
+        .get();
 
-    const container = document.getElementById('historyOrders');
-    const noOrders = document.getElementById('historyNoOrders');
-    container.innerHTML = '';
+      const container = document.getElementById('historyOrders');
+      const noOrders = document.getElementById('historyNoOrders');
+      container.innerHTML = '';
 
-    if (snap.empty) {
-      noOrders.classList.remove('hidden');
-      return;
+      if (snap.empty) {
+        noOrders.classList.remove('hidden');
+        return;
+      }
+      noOrders.classList.add('hidden');
+
+      snap.forEach(doc => {
+        const order = { id: doc.id, ...doc.data() };
+        container.appendChild(this.renderActiveCard(order));
+      });
+    } catch (err) {
+      console.error('History load error:', err);
     }
-    noOrders.classList.add('hidden');
-
-    snap.forEach(doc => {
-      const order = { id: doc.id, ...doc.data() };
-      container.appendChild(this.renderActiveCard(order));
-    });
   },
 
   renderPendingCard(order) {
@@ -104,12 +122,15 @@ const trader = {
     card.className = 'order-card pending';
 
     card.innerHTML = `
-      <h3>${order.pickup} → ${order.dropoff}</h3>
-      <p><strong>Package:</strong> ${order.packageDescription}</p>
-      <p><strong>Contact:</strong> ${order.customerPhone}</p>
-      <p><strong>Customer:</strong> ${order.customerName}</p>
+      <h3>${this.escHtml(order.pickup)} → ${this.escHtml(order.dropoff)}</h3>
+      <p style="font-size:0.8rem;color:#888;margin-bottom:0.5rem;">${this.formatTime(order.createdAt)}</p>
+      <p><strong>Package:</strong> ${this.escHtml(order.packageDescription)}</p>
+      <p><strong>Contact:</strong> ${this.escHtml(order.customerPhone)}</p>
+      <p><strong>Customer:</strong> ${this.escHtml(order.customerName)}</p>
       <div class="order-actions">
-        <button class="btn btn-success btn-sm" onclick="trader.acceptOrder('${order.id}')">Accept</button>
+        <button class="btn btn-success btn-sm" onclick="trader.acceptOrder('${order.id}', this)" ${this.acceptingSet.has(order.id) ? 'disabled' : ''}>
+          ${this.acceptingSet.has(order.id) ? 'Accepting...' : 'Accept'}
+        </button>
       </div>
     `;
     return card;
@@ -138,32 +159,41 @@ const trader = {
       in_transit: 'Mark Delivered'
     };
 
+    const isSharing = this.locationWatcher && this.locationOrderId === order.id;
+
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:start;">
-        <h3>${order.pickup} → ${order.dropoff}</h3>
+        <div>
+          <h3 style="margin-bottom:0.25rem;">${this.escHtml(order.pickup)} → ${this.escHtml(order.dropoff)}</h3>
+          <span style="font-size:0.8rem;color:#888;">${this.formatTime(order.createdAt)}</span>
+        </div>
         <span class="status-badge status-${order.status}">${statusLabels[order.status] || order.status}</span>
       </div>
-      <p><strong>Package:</strong> ${order.packageDescription}</p>
-      <p><strong>Customer:</strong> ${order.customerName} - ${order.customerPhone}</p>
+      <p style="margin-top:0.5rem;"><strong>Package:</strong> ${this.escHtml(order.packageDescription)}</p>
+      <p><strong>Customer:</strong> ${this.escHtml(order.customerName)} - ${this.escHtml(order.customerPhone)}</p>
+      ${order.acceptedAt ? `<p style="font-size:0.8rem;color:#888;">Accepted: ${this.formatTime(order.acceptedAt)}</p>` : ''}
       <div class="order-actions">
-        ${nextStatus[order.status] ? `<button class="btn btn-primary btn-sm" onclick="trader.updateStatus('${order.id}', '${nextStatus[order.status]}')">${nextLabel[order.status]}</button>` : ''}
-        ${order.status === 'in_transit' && !this.locationWatcher ? `<button class="btn btn-info btn-sm" onclick="trader.startSharingLocation('${order.id}')">Share Location</button>` : ''}
-        ${order.status === 'in_transit' && this.locationWatcher ? `<button class="btn btn-danger btn-sm" onclick="trader.stopSharingLocation()">Stop Sharing</button>` : ''}
+        ${nextStatus[order.status] ? `<button class="btn btn-primary btn-sm" onclick="trader.updateStatus('${order.id}', '${nextStatus[order.status]}', this)">${nextLabel[order.status]}</button>` : ''}
+        ${order.status === 'in_transit' && !isSharing ? `<button class="btn btn-info btn-sm" onclick="trader.startSharingLocation('${order.id}')">Share Location</button>` : ''}
+        ${order.status === 'in_transit' && isSharing ? `<button class="btn btn-danger btn-sm" onclick="trader.stopSharingLocation()">Stop Sharing</button><span style="font-size:0.75rem;color:#10b981;margin-left:0.5rem;">● Live</span>` : ''}
       </div>
     `;
     return card;
   },
 
-  async acceptOrder(orderId) {
+  async acceptOrder(orderId, btn) {
     const user = auth.currentUser;
-    if (!user) return;
+    if (!user || this.acceptingSet.has(orderId)) return;
+
+    this.acceptingSet.add(orderId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Accepting...'; }
 
     try {
       await db.runTransaction(async transaction => {
         const ref = db.collection('orders').doc(orderId);
         const doc = await transaction.get(ref);
         if (!doc.exists) throw new Error('Order not found.');
-        if (doc.data().status !== 'pending') throw new Error('Order already accepted by another trader.');
+        if (doc.data().status !== 'pending') throw new Error('This order was just accepted by another trader.');
 
         transaction.update(ref, {
           status: 'accepted',
@@ -174,23 +204,29 @@ const trader = {
         });
       });
     } catch (err) {
-      alert('Could not accept order: ' + err.message);
+      alert(err.message);
+    } finally {
+      this.acceptingSet.delete(orderId);
     }
   },
 
-  async updateStatus(orderId, newStatus) {
+  async updateStatus(orderId, newStatus, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Updating...'; }
     try {
       await db.collection('orders').doc(orderId).update({ status: newStatus });
     } catch (err) {
       alert('Error updating status: ' + err.message);
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
     }
   },
 
   startSharingLocation(orderId) {
     if (!navigator.geolocation) {
-      alert('Geolocation not supported.');
+      alert('Geolocation is not supported by your browser.');
       return;
     }
+
+    this.locationOrderId = orderId;
 
     this.locationWatcher = navigator.geolocation.watchPosition(
       async position => {
@@ -205,7 +241,8 @@ const trader = {
       },
       err => {
         console.error('Geolocation error:', err);
-        alert('Could not get location: ' + err.message);
+        alert('Could not access location: ' + err.message);
+        this.stopSharingLocation();
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
     );
@@ -216,5 +253,6 @@ const trader = {
       navigator.geolocation.clearWatch(this.locationWatcher);
       this.locationWatcher = null;
     }
+    this.locationOrderId = null;
   }
 };
